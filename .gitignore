@@ -16,3 +16,6 @@ venv/
 .idea/
 idea/
 .pytest_cache/
+
+# Разное
+README — копия.md

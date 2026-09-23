@@ -30,6 +30,11 @@ from orchestrator import Orchestrator
 
 st.set_page_config(page_title="Справочный ассистент", page_icon="🔎")
 
+import asyncio
+import sys
+
+if sys.platform == "win32": asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 
 @st.cache_resource
 def get_orchestrator() -> Orchestrator:
