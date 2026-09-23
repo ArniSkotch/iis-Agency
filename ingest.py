@@ -76,15 +76,18 @@ def clean_text(text: str) -> str:
 
 def chunk_text(text: str, size: int = config.CHUNK_SIZE,
                overlap: int = config.CHUNK_OVERLAP) -> list[str]:
-    """Нарезать текст на чанки размером size с перекрытием overlap.
-
-    Перекрытие нужно, чтобы мысль, попавшая на границу нарезки, не потерялась:
-    её хвост окажется в начале следующего чанка.
-
-    Следите за двумя вещами: шаг сдвига равен size - overlap (не size), и
-    overlap обязан быть меньше size, иначе цикл не сойдётся.
-    """
-    raise NotImplementedError("П2: реализуйте нарезку с перекрытием")
+    words = text.split()
+    chunks = []
+    step = size - overlap
+    for chunk_start in range(0, len(words), step):
+        chunk_end = chunk_start + size
+        words_per_chunk = words[chunk_start:chunk_end]
+        if not words_per_chunk:
+            continue
+        chunks.append(" ".join(words_per_chunk))
+        if chunk_end >= len(words):
+            break
+    return chunks
 
 
 def detect_category(text: str, source: str) -> str:
