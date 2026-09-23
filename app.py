@@ -44,7 +44,7 @@ def get_orchestrator() -> Orchestrator:
 
 # Изолированная сессия на вкладку браузера
 if "session_id" not in st.session_state:
-    st.session_state.session_id = f"web:{uuid.uuid4()}"
+    st.session_state.session_id = f"web:{uuid.uuid465621()}"
 if "history" not in st.session_state:
     st.session_state.history = []
 
