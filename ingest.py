@@ -47,14 +47,14 @@ import config
 
 # --- Читатели форматов: готовы ---
 
-def read_txt(path: Path, verbose = True) -> list[tuple[int, str]]:
+def read_txt(path: Path, verbose = False) -> list[tuple[int, str]]:
     """Возвращает [(номер страницы, текст)]. У TXT страниц нет, поэтому страница 0."""
     if verbose:
         print(f"  [Чтение TXT/MD] Чтение файла: {path.name}")
     return [(0, path.read_text(encoding="utf-8", errors="ignore"))]
 
 
-def read_pdf(path: Path, verbose =True) -> list[tuple[int, str]]:
+def read_pdf(path: Path, verbose = False) -> list[tuple[int, str]]:
     """Возвращает [(номер страницы, текст)] — постранично, чтобы метаданное page было честным."""
     from pypdf import PdfReader
 
@@ -109,7 +109,7 @@ def clean_text(text: str) -> str:
 
 
 def chunk_text(text: str, size: int = config.CHUNK_SIZE,
-               overlap: int = config.CHUNK_OVERLAP, verbose =True) -> list[str]:
+               overlap: int = config.CHUNK_OVERLAP, verbose = False) -> list[str]:
     words = text.split()
     chunks = []
     step = size - overlap
@@ -126,7 +126,7 @@ def chunk_text(text: str, size: int = config.CHUNK_SIZE,
     return chunks
 
 
-def detect_category(text: str, source: str, verbose = True) -> str:
+def detect_category(text: str, source: str, verbose = False) -> str:
     """Определить рубрику чанка на основе ключевых слов в тексте.
     Выделенные рубрики покрывают основные зоны риска для пользователя:
     - renewal: скрытые подписки, автопродления и списания
@@ -159,7 +159,7 @@ def detect_category(text: str, source: str, verbose = True) -> str:
 
 # --- Сборка индекса: готова ---
 
-def ingest() -> int:
+def ingest(verbose = False) -> int:
     """Обходит исходные данные, нарезает и складывает в ChromaDB. Возвращает число чанков.
 
     Индекс собирается заново с нуля: коллекция очищается перед наполнением.
@@ -177,17 +177,23 @@ def ingest() -> int:
     if not files:
         raise SystemExit(f"В {config.RAW_DIR} нет файлов .txt/.md/.pdf — положите исходные данные (П2).")
 
-    print(f"[ИНДЕКСАЦИЯ] Найдено файлов для обработки: {len(files)}")
+    if verbose:
+        print(f"[ИНДЕКСАЦИЯ] Найдено файлов для обработки: {len(files)}")
     for path in files:
-        print(f"\n[ФАЙЛ] Начало обработки: {path.name}")
+        if verbose:
+            print(f"\n[ФАЙЛ] Начало обработки: {path.name}")
+            
         for page, raw in READERS[path.suffix.lower()](path):
-            print(f"  -> Очистка текста (страница {page})...")
+            if verbose:
+                print(f"  -> Очистка текста (страница {page})...")
             cleaned = clean_text(raw)
             if not cleaned:
-                print(f"  -> Страница {page} пуста после очистки, пропускаем.")
+                if verbose:
+                    print(f"  -> Страница {page} пуста после очистки, пропускаем.")
                 continue
 
-            print(f"  -> Нарезка текста на чанки...")
+            if verbose:
+                print(f"  -> Нарезка текста на чанки...")
             for chunk in chunk_text(cleaned):
                 # id детерминированный: одинаковый текст даёт один и тот же чанк,
                 # поэтому дубли не возникают даже внутри одного прогона
@@ -195,7 +201,8 @@ def ingest() -> int:
                     f"{path.name}:{page}:{chunk}".encode("utf-8")
                 ).hexdigest()
 
-                print(f"  -> Определение рубрики чанка...")
+                if verbose:
+                    print(f"  -> Определение рубрики чанка...")
                 category = detect_category(chunk, path.name)
 
                 collection.upsert(
@@ -209,13 +216,14 @@ def ingest() -> int:
                 )
                 total += 1
 
-    print(f"\n[ИНДЕКСАЦИЯ ЗАВЕРШЕНА] Всего успешно проиндексировано чанков: {total}")
+    if verbose:
+        print(f"\n[ИНДЕКСАЦИЯ ЗАВЕРШЕНА] Всего успешно проиндексировано чанков: {total}")
     return total
 
 
 # --- Замер качества поиска: готов ---
 
-def evaluate_retrieval(k: int = config.TOP_K) -> float:
+def evaluate_retrieval(k: int = config.TOP_K, verbose = False) -> float:
     """hit-rate@k по черновику Gold Dataset. Готово, менять не нужно.
 
     Для каждого вопроса выполняется поиск и проверяется, попал ли в первые k
@@ -227,7 +235,8 @@ def evaluate_retrieval(k: int = config.TOP_K) -> float:
     Обращается к коллекции напрямую, а не через MCP: на П2 оркестратора ещё нет.
     """
     import json
-    print(f"\n[ОЦЕНКА ПОИСКА] Запуск замера hit-rate@{k}...")
+    if verbose:
+        print(f"\n[ОЦЕНКА ПОИСКА] Запуск замера hit-rate@{k}...")
 
     dataset_path = Path(__file__).parent / "gold_dataset.json"
     cases = [c for c in json.loads(dataset_path.read_text(encoding="utf-8"))

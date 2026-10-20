@@ -44,34 +44,51 @@ class Orchestrator:
     # --- Роли. Одна заполнена как образец, вторую добавляете вы (П3). ---
     ROLES: dict[str, dict] = {
         "analyst": {
-            "description": "ищет факты в базе знаний и отвечает со ссылками на источники",
-            "temperature": 0.2,   # факты — низкая температура
-            "filters": {},        # {} = искать по всему индексу
+            "description": "ищет пункты соглашений и законов, извлекает прямые факты и ссылается на источники",
+            "temperature": 0.15,
+            "filters": {},
         },
-        # TODO (П3): вторая роль. Например:
-        # "editor": {
-        #     "description": "переписывает ответ аналитика в нужном тоне и формате",
-        #     "temperature": 0.7,
-        #     "filters": {},
-        # },
+        "verifier": {
+            "description": "проверяет найденные пункты на скрытые условия, кабальные ограничения, штрафы и односторонние отказы сервиса",
+            "temperature": 0.22,
+            "filters": {},
+        },
+        "clarifier": {
+            "description": "когда ситуация описана без условий, от которых зависит применение пункта (тариф, статус лица, срок), задаёт один встречный вопрос вместо ответа",
+            "temperature": 0.26,
+            "filters": {},
+        },
+        "consultant": {
+            "description": "составляет экспресс-выжимку рисков по всему документу и выдает пошаговый алгоритм практических действий для защиты прав пользователя",
+            "temperature": 0.1,
+            "filters": {},
+        },
+        "comparer": {
+            "description": "сравнивает пункты оферты с нормами законодательства (например, ЗОПП) или с условиями других сервисов для выявления противоречий",
+            "temperature": 0.1,
+            "filters": {},
+        },
     }
 
     INITIAL_ROLE = "analyst"
     FALLBACK_ROLE = "analyst"
 
-    # --- Граф переходов: из какой роли в какие можно перейти (П3). ---
+    # --- Граф переходов: строгие ограничения между ролями ---
     TRANSITIONS: dict[str, set[str]] = {
-        "analyst": {"analyst"},
-        # TODO (П3): опишите переходы для своих ролей.
-        # Автомат нужен именно для того, чтобы не любой переход был разрешён:
-        # например, из "editor" нельзя уйти в "editor" — редактировать нечего,
-        # пока аналитик не нашёл факты.
+        "analyst": {"analyst", "verifier", "clarifier", "consultant", "comparer"},
+        "verifier": {"analyst", "verifier", "clarifier", "consultant", "comparer"},
+        "clarifier": {"analyst", "verifier", "consultant"},
+        "consultant": {"analyst", "verifier", "consultant"},
+        "comparer": {"analyst", "verifier", "consultant"},
     }
 
-    # --- Какой интент какой ролью обслуживается (П3). ---
+    # --- Соответствие интентов ролям ---
     INTENT_TO_ROLE: dict[str, str] = {
         "question": "analyst",
-        # TODO (П3): например "rewrite": "editor", "summarize": "editor"
+        "verify": "verifier",
+        "situation": "clarifier",
+        "advise": "consultant",
+        "compare": "comparer",
     }
 
     def __init__(self):
@@ -85,16 +102,42 @@ class Orchestrator:
     # --- Ваша часть (П3) ---
 
     def detect_intent(self, text: str) -> str:
-        """Определить интент реплики. Возвращает ключ из INTENT_TO_ROLE.
+        """Определить интент реплики на основе ключевых слов."""
+        low = text.lower()
 
-        Достаточно правил: ключевые слова, длина, наличие вопросительного знака.
-        LLM для маршрутизации не нужна — она недетерминирована и стоит денег,
-        а маршрут должен быть предсказуемым (Л3: FSM как детерминированная маршрутизация).
+        # Интент сравнения с законом или другими сервисами (comparer)
+        compare_keywords = [
+            "сравни", "по сравнению", "законно ли по закону",
+            "противоречит закону", "другой сервис", "лучше чем у"
+        ]
+        if any(word in low for word in compare_keywords):
+            return "compare"
 
-        На нераспознанной фразе верните "question" — пусть система отвечает,
-        а не отказывается.
-        """
-        raise NotImplementedError("П3: реализуйте определение интента")
+        # Интент запроса сводки, выжимки или плана действий (consultant)
+        consult_keywords = [
+            "план действий", "что делать", "как вернуть", "инструкция",
+            "кратко суть", "выжимка", "паспорт рисков", "резюме документа"
+        ]
+        if any(word in low for word in consult_keywords):
+            return "advise"
+
+        # Интент проверки на скрытые условия / подвохи (verifier)
+        verify_keywords = [
+            "уверен", "проверь", "скрыт", "подвох", "законно",
+            "право", "обман", "штраф", "ответственност", "убытк"
+        ]
+        if any(word in low for word in verify_keywords):
+            return "verify"
+
+        # Интент описания жизненной ситуации без вводных условий (clarifier)
+        situation_keywords = [
+            "у меня", "в моей ситуации", "если я", "случилось",
+            "а что если", "забыл", "опоздал"
+        ]
+        if any(word in low for word in situation_keywords) and len(low.split()) <= 15:
+            return "situation"
+
+        return "question"
 
     # --- Готовая механика: менять не нужно ---
 
