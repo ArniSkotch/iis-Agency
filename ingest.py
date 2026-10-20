@@ -39,22 +39,35 @@ ingest.py — сбор исходных данных и наполнение в�
 import hashlib
 from pathlib import Path
 
+# библиотека поиска текстовых данных по заданным шаблонам
+import re
+
 import config
 
 
 # --- Читатели форматов: готовы ---
 
-def read_txt(path: Path) -> list[tuple[int, str]]:
+def read_txt(path: Path, verbose = True) -> list[tuple[int, str]]:
     """Возвращает [(номер страницы, текст)]. У TXT страниц нет, поэтому страница 0."""
+    if verbose:
+        print(f"  [Чтение TXT/MD] Чтение файла: {path.name}")
     return [(0, path.read_text(encoding="utf-8", errors="ignore"))]
 
 
-def read_pdf(path: Path) -> list[tuple[int, str]]:
+def read_pdf(path: Path, verbose =True) -> list[tuple[int, str]]:
     """Возвращает [(номер страницы, текст)] — постранично, чтобы метаданное page было честным."""
     from pypdf import PdfReader
 
+    if verbose:
+        print(f"  [Чтение PDF] Открытие PDF-файла: {path.name}")
     reader = PdfReader(str(path))
-    return [(i + 1, page.extract_text() or "") for i, page in enumerate(reader.pages)]
+    pages_data = []
+    for i, page in enumerate(reader.pages):
+        page_num = i + 1
+        if verbose:
+            print(f"    -> Извлечение страницы {page_num} из {len(reader.pages)}")
+        pages_data.append((page_num, page.extract_text() or ""))
+    return pages_data
 
 
 READERS = {".txt": read_txt, ".md": read_txt, ".pdf": read_pdf}
@@ -63,19 +76,40 @@ READERS = {".txt": read_txt, ".md": read_txt, ".pdf": read_pdf}
 # --- Ваша часть (П2) ---
 
 def clean_text(text: str) -> str:
-    r"""Очистить сырой текст перед нарезкой.
+    if not text:
+        return ""
 
-    Что обычно нужно убрать: разрывы слов по переносу строки, повторяющиеся
-    колонтитулы, номера страниц отдельной строкой, цепочки пробелов и пустых строк.
+    # Markdown frontmatter в .md файле от яндекса
+    text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    # Строки с индексами документации типа "> **Documentation Index:** ..."
+    text = re.sub(r">\s*\*\*Documentation Index:\*\*.*?\n", "", text)
+    # Склеивания слов, разорванных переносом на границе строки (дефис + перевод строки)
+    text = re.sub(r"-\n", "", text)
+    # Служебные строки из Markdown'а
+    md_garbage_patterns = [
+        r"> \*\*Documentation Index:\*\*.*?\n",
+        r"metadata:\s*\n\s*-\s*name:.*?\n\s*content:.*?\n",
+    ]
+    for pattern in md_garbage_patterns:
+        text = re.sub(pattern, "", text, flags=re.DOTALL)
+    # Номера страниц и коротких служебных строк-одиночек (числа на отдельной строке)
+    text = re.sub(r"\n\s*\d{1,4}\s*\n", "\n", text)
+    # Хэштеги в markdown заголовках
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    # Неразрывные пробелы, спецсимволы
+    text = text.replace("\xa0", " ")
+    text = text.replace("\r\n", "\n")
+    text = re.sub(r"\uFEFF", "", text)
+    # Сжатие цепочек пробелов и табуляций в один пробел (без удаления переносов строк между абзацами)
+    text = re.sub(r"[ \t]+", " ", text)
+    # Избыточные пустые строки
+    text = re.sub(r"\n\s*\n", "\n\n", text)
 
-    Подсказка: начните с re.sub(r"-\n", "", text) и r"\s+" -> " ", посмотрите
-    на результат глазами и добавьте правила под свои исходные данные.
-    """
-    raise NotImplementedError("П2: реализуйте очистку текста")
+    return text.strip()
 
 
 def chunk_text(text: str, size: int = config.CHUNK_SIZE,
-               overlap: int = config.CHUNK_OVERLAP) -> list[str]:
+               overlap: int = config.CHUNK_OVERLAP, verbose =True) -> list[str]:
     words = text.split()
     chunks = []
     step = size - overlap
@@ -87,20 +121,40 @@ def chunk_text(text: str, size: int = config.CHUNK_SIZE,
         chunks.append(" ".join(words_per_chunk))
         if chunk_end >= len(words):
             break
+    if verbose:
+        print(f"    -> Нарезано чанков: {len(chunks)} (размер: {size}, перекрытие: {overlap})")
     return chunks
 
 
-def detect_category(text: str, source: str) -> str:
-    """Определить рубрику чанка.
-
-    Словарь рубрик — ваш проектный выбор, он зависит от домена. Для налогового
-    консультанта это может быть "law" | "faq" | "forms"; для ассистента абитуриента —
-    "admission" | "dormitory" | "schedule".
-
-    Достаточно правил по имени файла и ключевым словам — LLM здесь не нужна.
-    Пустых категорий быть не должно: заведите рубрику по умолчанию.
+def detect_category(text: str, source: str, verbose = True) -> str:
+    """Определить рубрику чанка на основе ключевых слов в тексте.
+    Выделенные рубрики покрывают основные зоны риска для пользователя:
+    - renewal: скрытые подписки, автопродления и списания
+    - data_sharing: передача персональных данных партнерам и третьим лицам
+    - liability: ограничение ответственности сервиса и штрафы
+    - changes: право компании менять условия в одностороннем порядке
     """
-    raise NotImplementedError("П2: реализуйте рубрикацию")
+    text_lower = text.lower()
+
+    # Считаем количество вхождений ключевых слов для каждой рубрики
+    scores = {category: 0 for category in config.RUBRICS}
+    for category, keywords in config.RUBRICS.items():
+        for kw in keywords:
+            if kw in text_lower:
+                scores[category] += text_lower.count(kw)
+
+    # Находим рубрику с максимальным числом совпадений
+    best_category = max(scores, key=scores.get)
+
+    # Если ключевые слова не найдены, относим чанк к категории по умолчанию
+    if scores[best_category] > 0:
+        category_result = best_category
+    else:
+        category_result = config.DEFAULT_RUBRIC
+
+    if verbose:
+        print(f"    -> Рубрика чанка: [{category_result}]")
+    return category_result
 
 
 # --- Сборка индекса: готова ---
@@ -123,12 +177,17 @@ def ingest() -> int:
     if not files:
         raise SystemExit(f"В {config.RAW_DIR} нет файлов .txt/.md/.pdf — положите исходные данные (П2).")
 
+    print(f"[ИНДЕКСАЦИЯ] Найдено файлов для обработки: {len(files)}")
     for path in files:
+        print(f"\n[ФАЙЛ] Начало обработки: {path.name}")
         for page, raw in READERS[path.suffix.lower()](path):
+            print(f"  -> Очистка текста (страница {page})...")
             cleaned = clean_text(raw)
             if not cleaned:
+                print(f"  -> Страница {page} пуста после очистки, пропускаем.")
                 continue
 
+            print(f"  -> Нарезка текста на чанки...")
             for chunk in chunk_text(cleaned):
                 # id детерминированный: одинаковый текст даёт один и тот же чанк,
                 # поэтому дубли не возникают даже внутри одного прогона
@@ -136,17 +195,21 @@ def ingest() -> int:
                     f"{path.name}:{page}:{chunk}".encode("utf-8")
                 ).hexdigest()
 
+                print(f"  -> Определение рубрики чанка...")
+                category = detect_category(chunk, path.name)
+
                 collection.upsert(
                     ids=[chunk_id],
                     documents=[chunk],
                     metadatas=[{
                         "source": path.name,
                         "page": page,
-                        "category": detect_category(chunk, path.name),
+                        "category": category,
                     }],
                 )
                 total += 1
 
+    print(f"\n[ИНДЕКСАЦИЯ ЗАВЕРШЕНА] Всего успешно проиндексировано чанков: {total}")
     return total
 
 
@@ -164,6 +227,7 @@ def evaluate_retrieval(k: int = config.TOP_K) -> float:
     Обращается к коллекции напрямую, а не через MCP: на П2 оркестратора ещё нет.
     """
     import json
+    print(f"\n[ОЦЕНКА ПОИСКА] Запуск замера hit-rate@{k}...")
 
     dataset_path = Path(__file__).parent / "gold_dataset.json"
     cases = [c for c in json.loads(dataset_path.read_text(encoding="utf-8"))

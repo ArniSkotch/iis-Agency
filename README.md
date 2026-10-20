@@ -69,7 +69,7 @@
 
 | № | Метрика | Целевое значение | Чем измеряется | Первый замер |
 | - | ------- | ---------------- | -------------- | ------------ |
-| 1 | hitrate@3 = 2 | >= 0.66 | evaluate_retrieval() в ingest.py | П2 |
+| 1 | hitrate@3 = 5 | >= 1 | evaluate_retrieval() в ingest.py | П2 |
 | 2 | Answer Relevance = 10 | >= 0.7 | judge() в test_suite.py | П6 |
 | 3 | Расход токенов всего за эталонный диалог | < 50000 | measure_dialog() в finops.py | П8 |
 
