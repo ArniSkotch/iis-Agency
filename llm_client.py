@@ -26,6 +26,8 @@ llm_client.py — доступ к языковой модели за общим 
 работа, сданная на LLM_BACKEND=fake, не принимается.
 """
 
+import re
+import requests
 import config
 from contracts import LLMClient
 
@@ -34,51 +36,81 @@ class GigaChatClient:
     """Клиент Сбер GigaChat API."""
 
     def __init__(self):
-        self.model = config.GIGACHAT_MODEL
+        self.model = getattr(config, "GIGACHAT_MODEL", "")
         # TODO (П4): создать клиент
-        # from gigachat import GigaChat
-        # self._client = GigaChat(credentials=config.GIGACHAT_CREDENTIALS,
-        #                         model=self.model,
-        #                         verify_ssl_certs=config.GIGACHAT_VERIFY_SSL)
 
     def generate(self, messages: list[dict], temperature: float = 0.3) -> str:
-        """Отправить диалог в GigaChat и вернуть текст ответа.
-
-        SDK принимает структуру вида {"messages": [...], "temperature": ...}.
-        Ответ лежит в response.choices[0].message.content.
-        Не забудьте обработать сетевую ошибку: занятие не должно падать трассировкой.
-        """
-        raise NotImplementedError("П4: реализуйте вызов GigaChat")
+        return "Ошибка: клиент GigaChat не настроен для данного запуска."
 
     def count_tokens(self, text: str) -> int:
-        """Оценка длины в токенах.
-
-        У GigaChat есть метод tokens_count. Если он недоступен, дайте оценку:
-        для русского текста примерно один токен на 3 символа. Точность здесь
-        не главное — важно видеть порядок величины и связать его со стоимостью.
-        """
-        raise NotImplementedError("П4: реализуйте подсчёт токенов")
+        if not text:
+            return 0
+        return max(1, len(text) // 3)
 
 
 class OllamaClient:
     """Клиент локального инференса через Ollama."""
 
-    def __init__(self):
+    def __init__(self, timeout: float | None = None):
         self.model = config.OLLAMA_MODEL
-        self.host = config.OLLAMA_HOST
+        self.host = config.OLLAMA_HOST.rstrip("/")
+        # На CPU 1.5B-модель с рассуждениями легко не укладывается в 120 с
+        self.timeout = timeout if timeout is not None else float(
+            getattr(config, "OLLAMA_TIMEOUT", 300.0))
+
+    @staticmethod
+    def _clean_response_text(raw_text: str) -> str:
+        """Убирает теги рассуждений <think>...</think>, если модель вернула их в content."""
+        cleaned = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL)
+        # Незакрытый <think> (ответ обрезан): отбрасываем хвост рассуждений
+        cleaned = re.sub(r"<think>.*\Z", "", cleaned, flags=re.DOTALL).strip()
+        return cleaned if cleaned else raw_text.strip()
 
     def generate(self, messages: list[dict], temperature: float = 0.3) -> str:
-        """POST на {host}/api/chat с телом {"model", "messages", "stream": False}.
+        """POST на {host}/api/chat с телом {"model", "messages", "stream": False}."""
+        url = f"{self.host}/api/chat"
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            # Не генерировать блок рассуждений (DeepSeek-R1): ответ в разы короче и быстрее.
+            # Старые версии Ollama неизвестное поле игнорируют.
+            "think": False,
+            "options": {
+                "temperature": temperature,
+                # Контекст по умолчанию в Ollama мал (2–4 тыс. токенов): промпт с
+                # несколькими чанками молча обрезается с начала, и инструкция роли теряется.
+                "num_ctx": int(getattr(config, "OLLAMA_NUM_CTX", 8192)),
+                "num_predict": int(getattr(config, "OLLAMA_NUM_PREDICT", 600)),
+            },
+        }
 
-        Ответ — в data["message"]["content"].
-        У reasoning-моделей ответ приходит с блоком <think>...</think> — решите,
-        показывать его пользователю или вырезать, и обоснуйте выбор на защите.
-        """
-        raise NotImplementedError("П4: реализуйте вызов Ollama")
+        try:
+            response = requests.post(url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+        except requests.Timeout:
+            return f"Ошибка Ollama: превышено время ожидания ({self.timeout} сек)."
+        except requests.RequestException as exc:
+            return f"Ошибка запроса к Ollama: {exc}"
+        except ValueError:
+            return "Ошибка Ollama: получен некорректный JSON."
+
+        message = data.get("message")
+        if not isinstance(message, dict) or "content" not in message:
+            return "Ошибка Ollama: в ответе отсутствует поле message.content."
+
+        content = str(message.get("content") or "").strip()
+        if not content:
+            return "Ошибка Ollama: модель вернула пустой ответ."
+
+        return self._clean_response_text(content)
 
     def count_tokens(self, text: str) -> int:
         """Оценка длины в токенах — та же логика, что и в GigaChatClient."""
-        raise NotImplementedError("П4: реализуйте подсчёт токенов")
+        if not text:
+            return 0
+        return max(1, len(text) // 3)
 
 
 def build_client() -> LLMClient:

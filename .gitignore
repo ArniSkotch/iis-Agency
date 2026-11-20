@@ -19,3 +19,4 @@ test*.py
 # Разное
 README — копия.md
 *.bundle
+diag_mcp.py
