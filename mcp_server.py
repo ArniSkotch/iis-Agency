@@ -128,6 +128,9 @@ def get_history(session_id: str, n: int = config.MEMORY_WINDOW, verbose = False)
 
 
 if __name__ == "__main__":
-    sys.stderr.write("[MCP_SERVER] Запуск mcp.run() (ожидание запросов через stdio)...\n")
-    sys.stderr.flush()
+    # На Windows первый импорт нативных RAG-библиотек может зависнуть,
+    # если поток MCP уже читает stdin. Импортируем их до запуска stdio.
+    import chromadb
+    import sentence_transformers
+
     mcp.run()

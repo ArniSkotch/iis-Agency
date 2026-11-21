@@ -81,30 +81,44 @@ class OllamaClient:
                 # Контекст по умолчанию в Ollama мал (2–4 тыс. токенов): промпт с
                 # несколькими чанками молча обрезается с начала, и инструкция роли теряется.
                 "num_ctx": int(getattr(config, "OLLAMA_NUM_CTX", 8192)),
-                "num_predict": int(getattr(config, "OLLAMA_NUM_PREDICT", 600)),
+                # В лимит входят и токены рассуждений: слишком малый лимит оставляет
+                # content пустым (модель не успевает дойти до ответа).
+                "num_predict": int(getattr(config, "OLLAMA_NUM_PREDICT", 2048)),
             },
         }
 
-        try:
-            response = requests.post(url, json=payload, timeout=self.timeout)
-            response.raise_for_status()
-            data = response.json()
-        except requests.Timeout:
-            return f"Ошибка Ollama: превышено время ожидания ({self.timeout} сек)."
-        except requests.RequestException as exc:
-            return f"Ошибка запроса к Ollama: {exc}"
-        except ValueError:
-            return "Ошибка Ollama: получен некорректный JSON."
+        data = None
+        for attempt in range(2):
+            try:
+                response = requests.post(url, json=payload, timeout=self.timeout)
+                response.raise_for_status()
+                data = response.json()
+            except requests.Timeout:
+                return f"Ошибка Ollama: превышено время ожидания ({self.timeout} сек)."
+            except requests.RequestException as exc:
+                return f"Ошибка запроса к Ollama: {exc}"
+            except ValueError:
+                return "Ошибка Ollama: получен некорректный JSON."
 
-        message = data.get("message")
-        if not isinstance(message, dict) or "content" not in message:
-            return "Ошибка Ollama: в ответе отсутствует поле message.content."
+            message = data.get("message")
+            if not isinstance(message, dict) or "content" not in message:
+                return "Ошибка Ollama: в ответе отсутствует поле message.content."
 
-        content = str(message.get("content") or "").strip()
-        if not content:
-            return "Ошибка Ollama: модель вернула пустой ответ."
+            content = str(message.get("content") or "").strip()
+            cleaned = self._clean_response_text(content) if content else ""
+            if cleaned:
+                return cleaned
 
-        return self._clean_response_text(content)
+            # Пусто: чаще всего весь лимит ушёл на рассуждения. Один повтор с лимитом втрое больше.
+            if attempt == 0 and data.get("done_reason") == "length":
+                payload["options"]["num_predict"] *= 3
+                continue
+            break
+
+        reason = (data or {}).get("done_reason", "?")
+        had_thinking = bool(((data or {}).get("message") or {}).get("thinking"))
+        return (f"Ошибка Ollama: модель вернула пустой ответ "
+                f"(done_reason={reason}, рассуждения={'да' if had_thinking else 'нет'}).")
 
     def count_tokens(self, text: str) -> int:
         """Оценка длины в токенах — та же логика, что и в GigaChatClient."""
