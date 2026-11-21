@@ -110,17 +110,35 @@ def clean_text(text: str) -> str:
 
 def chunk_text(text: str, size: int = config.CHUNK_SIZE,
                overlap: int = config.CHUNK_OVERLAP, verbose = False) -> list[str]:
-    words = text.split()
+    """Нарезка по СИМВОЛАМ: окно size символов, перекрытие overlap символов.
+
+    Границы сдвигаются к ближайшему пробелу, чтобы слова не рвались пополам,
+    поэтому реальная длина чанка может быть чуть меньше size.
+    """
+    if overlap >= size:
+        raise ValueError(f"CHUNK_OVERLAP ({overlap}) должен быть меньше CHUNK_SIZE ({size})")
+
+    text = " ".join(text.split())          # одиночные пробелы, как и раньше
+    n = len(text)
     chunks = []
-    step = size - overlap
-    for chunk_start in range(0, len(words), step):
-        chunk_end = chunk_start + size
-        words_per_chunk = words[chunk_start:chunk_end]
-        if not words_per_chunk:
-            continue
-        chunks.append(" ".join(words_per_chunk))
-        if chunk_end >= len(words):
+    start = 0
+    while start < n:
+        end = min(start + size, n)
+        if end < n:
+            # откатываем конец к последнему пробелу во второй половине окна
+            cut = text.rfind(" ", start + size // 2, end)
+            if cut != -1:
+                end = cut
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        if end >= n:
             break
+        # следующее окно начинается за overlap символов до конца, на границе слова
+        nxt = end - overlap
+        space = text.find(" ", nxt, end)
+        nxt = space + 1 if space != -1 else end
+        start = nxt if nxt > start else end
     if verbose:
         print(f"    -> Нарезано чанков: {len(chunks)} (размер: {size}, перекрытие: {overlap})")
     return chunks

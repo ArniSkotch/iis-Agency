@@ -20,3 +20,4 @@ test*.py
 README — копия.md
 *.bundle
 diag_mcp.py
+diag_retrieval.py
