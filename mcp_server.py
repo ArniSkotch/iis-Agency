@@ -27,6 +27,22 @@ sys.stderr.flush()
 mcp = FastMCP("iis-rag")
 
 
+def _fix_mojibake(text):
+    """Починить текст, пришедший по stdio в неверной кодировке.
+
+    На русской Windows запрос приходил в сервер как UTF-8, прочитанный как cp1251
+    («Какое» -> «РљР°РєРѕРµ»): эмбеддинг считался по мусору, и поиск через MCP
+    находил не то, что прямой запрос к индексу. Правильный текст не меняется:
+    он не проходит обратное преобразование cp1251 -> UTF-8.
+    """
+    if not isinstance(text, str):
+        return text
+    try:
+        return text.encode("cp1251").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
+
 def _to_chunks(result: dict, verbose = False) -> list[dict]:
     """Разворачивает ответ ChromaDB в плоский список чанков."""
     if verbose:
@@ -58,6 +74,7 @@ def _to_chunks(result: dict, verbose = False) -> list[dict]:
 @mcp.tool()
 def search(query: str, k: int = config.TOP_K, verbose = False) -> list[dict]:
     """Семантический поиск по базе знаний. Возвращает k наиболее близких фрагментов."""
+    query = _fix_mojibake(query)
     if verbose:
         sys.stderr.write(f"[MCP_SERVER] Вызван инструмент 'search' с запросом: '{query}' (k={k})\n")
         sys.stderr.flush()
@@ -86,6 +103,8 @@ def search_filtered(query: str, filters: dict, k: int = config.TOP_K, verbose = 
     filters — словарь вида {"category": "regulations"} или {"source": "nk_rf.pdf"}.
     Пустой словарь равносилен обычному search.
     """
+    query = _fix_mojibake(query)
+    filters = {key: _fix_mojibake(value) for key, value in (filters or {}).items()}
     if verbose:
         sys.stderr.write(f"[MCP_SERVER] Вызван 'search_filtered' с запросом: '{query}', фильтры: {filters}\n")
         sys.stderr.flush()
@@ -111,6 +130,7 @@ def search_filtered(query: str, filters: dict, k: int = config.TOP_K, verbose = 
 @mcp.tool()
 def get_history(session_id: str, n: int = config.MEMORY_WINDOW, verbose = False) -> list[dict]:
     """Последние n реплик сессии. Начинает работать после практики 5."""
+    session_id = _fix_mojibake(session_id)
     if verbose:
         sys.stderr.write(f"[MCP_SERVER] Вызван 'get_history' для сессии {session_id}\n")
         sys.stderr.flush()
@@ -128,6 +148,14 @@ def get_history(session_id: str, n: int = config.MEMORY_WINDOW, verbose = False)
 
 
 if __name__ == "__main__":
+    # stdin на русской Windows открывается в cp1251, а клиент пишет в UTF-8.
+    # Если библиотека читает sys.stdin напрямую, это исправляет кодировку у источника;
+    # _fix_mojibake в инструментах страхует случай, когда она оборачивает буфер сама.
+    try:
+        sys.stdin.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
     # На Windows первый импорт нативных RAG-библиотек может зависнуть,
     # если поток MCP уже читает stdin. Импортируем их до запуска stdio.
     import chromadb
