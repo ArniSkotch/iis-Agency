@@ -51,8 +51,12 @@ def create_schema() -> None:
 
     Подсказка: SCHEMA выше уже написана — выполните её и не забудьте commit().
     """
-    # TODO (П5): выполнить SCHEMA
-    return None
+    conn = connect()
+    try:
+        conn.execute(SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def save(session_id: str, role: str, content: str) -> None:
@@ -62,8 +66,16 @@ def save(session_id: str, role: str, content: str) -> None:
     Пользуйтесь параметрами запроса (?, ?, ?), а не конкатенацией строк —
     иначе получите SQL-инъекцию в дополнение к prompt-инъекции из П7.
     """
-    # TODO (П5): вставить реплику в messages
-    return None
+    ts = datetime.now().isoformat(timespec="seconds")
+    conn = connect()
+    try:
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+            (session_id, role, content, ts),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def window(session_id: str, n: int = config.MEMORY_WINDOW) -> list[Message]:
@@ -72,11 +84,25 @@ def window(session_id: str, n: int = config.MEMORY_WINDOW) -> list[Message]:
     Ловушка: ORDER BY id DESC LIMIT n даёт последние n, но в обратном порядке.
     Разверните результат перед возвратом, иначе LLM прочитает диалог задом наперёд.
     """
-    # TODO (П5): выбрать последние n сообщений сессии
-    return []
+    if n <= 0:
+        return []
+    conn = connect()
+    try:
+        rows = conn.execute(
+            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+            (session_id, n),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return [Message(role=role, content=content) for role, content in reversed(rows)]
 
 
 def clear(session_id: str) -> None:
     """Удалить историю сессии. Нужна кнопке очистки в app.py (П6)."""
-    # TODO (П5): удалить реплики сессии
-    return None
+    conn = connect()
+    try:
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        conn.commit()
+    finally:
+        conn.close()
