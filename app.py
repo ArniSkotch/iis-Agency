@@ -28,7 +28,7 @@ import streamlit as st
 import config
 from orchestrator import Orchestrator
 
-st.set_page_config(page_title="Справочный ассистент", page_icon="🔎")
+st.set_page_config(page_title="Проверка соглашений на скрытые условия", page_icon="🔎")
 
 import asyncio
 import sys
@@ -44,15 +44,20 @@ def get_orchestrator() -> Orchestrator:
 
 # Изолированная сессия на вкладку браузера
 if "session_id" not in st.session_state:
-    st.session_state.session_id = f"web:{uuid.uuid465621()}"
+    st.session_state.session_id = f"web:{uuid.uuid4()}"
 if "history" not in st.session_state:
     st.session_state.history = []
 
 orchestrator = get_orchestrator()
 
 # TODO (П6): замените заголовок и подсказку на свои
-st.title("Справочный ассистент")
-st.caption("Отвечает по загруженной базе знаний и ссылается на источники.")
+st.title("Агент проверки пользовательских соглашений")
+st.caption(
+    "Ищет скрытые условия, штрафы, автопродление и одностороннее изменение правил. "
+    "Отвечает по документам: пользовательские соглашения Ozon, GigaChat, ВКонтакте, "
+    "Яндекс, Wildberries и Закон о защите прав потребителей. "
+    "К каждому ответу добавляется ссылка на источник."
+)
 
 # Готовая часть, не убирать: на офлайн-заглушке ответы выглядят осмысленно,
 # и без плашки это легко принять за работающую систему — в том числе на защите.
@@ -76,7 +81,7 @@ for role, content in st.session_state.history:
     with st.chat_message(role):
         st.markdown(content)
 
-if question := st.chat_input("Задайте вопрос по базе знаний"):
+if question := st.chat_input("Например: может ли сервис изменить условия соглашения без моего согласия?"):
     st.session_state.history.append(("user", question))
     with st.chat_message("user"):
         st.markdown(question)
